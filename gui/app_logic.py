@@ -10,12 +10,13 @@ import time
 import threading
 from datetime import datetime
 
-from PyQt5.QtWidgets import QMainWindow, QInputDialog, QMessageBox
+from PyQt5.QtWidgets import QMainWindow, QInputDialog, QMessageBox, QFileDialog
 from PyQt5.QtCore import Qt, pyqtSignal, QObject
 from PyQt5.QtGui import QImage, QPixmap
 
 from core.detection import FaceDetector
 from core.recognition import FaceRecognizer
+from core.fingerprint import FingerprintRecognizer
 from core.enrollment import EnrollmentPipeline
 from core.fusion import decide
 from core.template_watermark import TemplateWatermarker
@@ -32,6 +33,7 @@ from gui.main_window import build_ui, DECISION_COLORS, BORDER, TEXT, TEXT2
 class Signals(QObject):
     new_frame = pyqtSignal(object)    # sends a camera frame to display
     new_log   = pyqtSignal(str, str)  # sends (message, type) to the log
+    ask_fingerprint = pyqtSignal(dict)   # sends {"name": ..., "face_score": ...} to ask for fingerprint scan
 
 
 # ── Main class ────────────────────────────────────────────────────────────────
@@ -49,6 +51,8 @@ class AppLogic(QMainWindow):
         self.recognizer = FaceRecognizer()
         self.twm        = TemplateWatermarker()
         self.enrollment = EnrollmentPipeline(db=self.db)
+        self._fp_event     = threading.Event()
+        self._fp_result    = None
 
         # Camera state
         self.camera  = None
@@ -68,6 +72,8 @@ class AppLogic(QMainWindow):
         self.btn_start.clicked.connect(self.start)
         self.btn_stop.clicked.connect(self.stop)
         self.btn_integrity.clicked.connect(self.check_integrity)
+        self.btn_enroll_fp.clicked.connect(self.enroll_fingerprint)
+        self.sig.ask_fingerprint.connect(self._ask_fingerprint_popup)
 
     # ── 1. Enroll a person ────────────────────────────────────────────────────
 
@@ -133,61 +139,88 @@ class AppLogic(QMainWindow):
     # ── 5. Camera loop (runs in background thread) ────────────────────────────
 
     def _camera_loop(self):
-        count = 0
-        faces = []
-        label = ""
-        color = (180, 180, 180)
+            count = 0
+            faces = []
+            label = ""
+            color = (180, 180, 180)
 
-        while self.running:
-            ok, frame = self.camera.read()
-            if not ok:
-                break
-            count += 1
+            while self.running:
+                ok, frame = self.camera.read()
+                if not ok:
+                    break
+                count += 1
 
-            # Detect faces every 3 frames (for performance)
-            if count % 3 == 0:
-                small = cv2.resize(frame, (0, 0), fx=0.75, fy=0.75)
-                scale = 1 / 0.75
-                faces = [
-                    (int(x*scale), int(y*scale), int(w*scale), int(h*scale))
-                    for x, y, w, h in self.detector.detect(small)
-                ]
+                # Detect faces every 3 frames
+                if count % 3 == 0:
+                    small = cv2.resize(frame, (0, 0), fx=0.75, fy=0.75)
+                    scale = 1 / 0.75
+                    faces = [
+                        (int(x*scale), int(y*scale), int(w*scale), int(h*scale))
+                        for x, y, w, h in self.detector.detect(small)
+                    ]
+                    if not faces:
+                        label = "No face detected"
+                        color = (180, 180, 180)
 
-            # Authenticate every 60 frames (~2 sec at 30fps)
-            if count % 60 == 0 and faces:
-                x, y, w, h = faces[0]
-                roi = frame[y:y+h, x:x+w]
+                # Try to recognize every 60 frames
+                if count % 60 == 0 and faces:
+                    x, y, w, h = faces[0]
+                    roi         = frame[y:y+h, x:x+w]
+                    face_result = self.recognizer.predict(roi)
 
-                face_result = self.recognizer.predict(roi)
-                result      = decide(face_result)
+                    if face_result["status"] == "unknown":
+                        label = "Unknown"
+                        color = (242, 153, 0)
+                        self.sig.new_log.emit("Unknown face — intrusion.", "unknown")
+                        self.sig.new_log.emit("__result__|unknown|Unknown|0%", "__result__")
 
-                color_map = {
-                    "authorized":   (30, 142, 62),
-                    "unauthorized": (217, 48, 37),
-                    "unknown":      (242, 153, 0),
-                }
-                color = color_map.get(result["decision"], (150, 150, 150))
-                label = f"{result['name']}  {result['score']*100:.0f}%"
+                    elif face_result["status"] == "unauthorized":
+                        label  = f"{face_result['name']} — REFUSED"
+                        color  = (217, 48, 37)
+                        result = decide(face_result)
+                        self.db.log_auth(result["name"], result["decision"],
+                            result["face_score"], result["fp_score"],
+                            result["score"], result["detail"])
+                        self.sig.new_log.emit(result["detail"], "unauthorized")
+                        self.sig.new_log.emit(
+                            f"__result__|unauthorized|{face_result['name']}|{face_result['confidence']*100:.0f}%",
+                            "__result__")
 
-                # Save to database
-                self.db.log_auth(
-                    result["name"], result["decision"],
-                    result["face_score"], result["fp_score"],
-                    result["score"], result["detail"])
+                    else:
+                        label = f"{face_result['name']} — scan fingerprint"
+                        color = (30, 142, 62)
+                        self.sig.new_log.emit(
+                            f"Face recognized: {face_result['name']} — please upload fingerprint",
+                            "info")
+                        self.sig.ask_fingerprint.emit(face_result)
 
-                # Send to log
-                self.sig.new_log.emit(result["detail"], result["decision"])
+                        self._fp_event.clear()
+                        self._fp_event.wait(timeout=30)
 
-                # Update result bar
-                self.sig.new_log.emit(
-                    f"__result__|{result['decision']}|{result['name']}|{result['score']*100:.0f}%",
-                    "__result__")
+                        result = decide(face_result, fingerprint_result=self._fp_result)
+                        self._fp_result = None
 
-            self.detector.draw(frame, faces, label, color)
-            self.sig.new_frame.emit(frame)
+                        color_map = {
+                            "authorized":   (30, 142, 62),
+                            "partial":      (227, 116, 0),
+                            "unauthorized": (217, 48, 37),
+                            "unknown":      (242, 153, 0),
+                        }
+                        color = color_map.get(result["decision"], (150, 150, 150))
+                        label = f"{result['name']}  {result['score']*100:.0f}%"
 
-        self.running = False
+                        self.db.log_auth(result["name"], result["decision"],
+                            result["face_score"], result["fp_score"],
+                            result["score"], result["detail"])
+                        self.sig.new_log.emit(result["detail"], result["decision"])
+                        self.sig.new_log.emit(
+                            f"__result__|{result['decision']}|{result['name']}|{result['score']*100:.0f}%",
+                            "__result__")
 
+                self.detector.draw(frame, faces, label, color)
+                self.sig.new_frame.emit(frame)
+
+            self.running = False
     # ── 6. Check DB integrity ─────────────────────────────────────────────────
 
     def check_integrity(self):
@@ -237,6 +270,39 @@ class AppLogic(QMainWindow):
             f' <span style="color:{fg}">{message}</span>')
         self.log_box.verticalScrollBar().setValue(
             self.log_box.verticalScrollBar().maximum())
+        
+    # ── Fingerprint popup ─────────────────────────────────────────────────────
+    def enroll_fingerprint(self):
+        """Register a fingerprint from an image file."""
+        name, ok = QInputDialog.getText(self, "Enroll fingerprint", "Name:")
+        if not ok or not name.strip():
+            return
+        status, ok = QInputDialog.getItem(
+            self, "Status", "Status:", ["authorized", "unauthorized"], 0, False)
+        if not ok:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select fingerprint image", "", "Images (*.bmp *.png *.jpg)")
+        if not path:
+            return
+        ok2, msg = self.fp_recognizer.enroll(name.strip(), status, path)
+        self.sig.new_log.emit(msg, "info" if ok2 else "error")
+
+    def _ask_fingerprint_popup(self, face_result):
+        """Called automatically after face is recognized — asks for fingerprint image."""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Face: {face_result['name']} — Select your fingerprint image",
+            "",
+            "Images (*.bmp *.png *.jpg)")
+        if path:
+            self._fp_result = self.fp_recognizer.predict(path)
+            self.sig.new_log.emit(
+                f"Fingerprint score: {self._fp_result['confidence']*100:.0f}%", "info")
+        else:
+            self._fp_result = None
+            self.sig.new_log.emit("Fingerprint cancelled.", "info")
+        self._fp_event.set()  # unblock the camera loop
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
 

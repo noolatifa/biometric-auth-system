@@ -21,7 +21,8 @@ def extract_features(bgr_face):
     """Retourne un vecteur HOG + LBP normalisé."""
     face = cv2.resize(bgr_face, FACE_SIZE)
     gray = cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)
-    gray = cv2.equalizeHist(gray)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)) #clahe pour améliorer les contrastes locaux (utile pour les visages sombres ou éclairés de travers)
+    gray  = clahe.apply(gray)
 
     # HOG : capture la forme et les contours
     hog_vec = hog(gray, orientations=9, pixels_per_cell=(8, 8),

@@ -28,9 +28,16 @@ class EnrollmentPipeline:
         Appuyer ESPACE pour capturer, Q pour annuler.
         Stocke le gabarit moyen tatoué en BDD.
         """
+
+        if self.db.get_person_id(name) is not None:
+            return False, f"{name} is already enrolled. Delete first to re-enroll."
+            
+
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
             return False, "Impossible d'ouvrir la webcam."
+
+       
 
         vectors  = []
         save_dir = os.path.join(SAVE_DIR, status, name)
@@ -68,11 +75,36 @@ class EnrollmentPipeline:
 
         # Gabarit = moyenne des vecteurs capturés
         mean_vec  = np.mean(vectors, axis=0)
+        
+        is_dup, dup_name = self._is_duplicate_face(mean_vec)
+        if is_dup:
+            return False, f"This face is already enrolled as '{dup_name}'."
+
+
         person_id = self.db.add_person(name, status)
 
+       
         payload  = self.twm.build_payload(person_id, name, camera_id)
         wm_vec   = self.twm.embed(mean_vec, payload)
         checksum = self.twm.compute_checksum(wm_vec)
 
         self.db.store_template(person_id, "face", wm_vec, checksum, payload)
         return True, f"{name} enrôlé ({len(mean_vec)} dims, checksum: {checksum[:12]}…)"
+     
+     
+     
+    def _is_duplicate_face(self, new_vector):
+        """Returns True if a very similar face template already exists in DB."""
+        from numpy.linalg import norm
+        persons = self.db.list_persons()
+        for pid, name, status in persons:
+            tmpl = self.db.load_template(pid, "face")
+            if tmpl is None:
+                continue
+            # cosine similarity between the two vectors
+            a = new_vector
+            b = tmpl["vector"]
+            similarity = float(np.dot(a, b) / (norm(a) * norm(b) + 1e-8))
+            if similarity > 0.92:   # threshold — same face
+                return True, name
+        return False, None

@@ -35,6 +35,7 @@ DECISION_COLORS = {
     "unknown":      (AMBER, AMBER_L, "Unknown"),
     "info":         (BLUE,  BLUE_L,  "Info"),
     "error":        (RED,   RED_L,   "Error"),
+    "partial": ("#E37400", "#FEF0E0", "Partial"),
 }
 
 
@@ -199,8 +200,13 @@ def _make_right_panel(window):
 
     actions_layout.addWidget(_section_title("Management"))
     actions_layout.addSpacing(2)
+    
     window.btn_enroll = _btn_filled("+ Enroll person")
     actions_layout.addWidget(window.btn_enroll)
+    
+    window.btn_enroll_fp = _btn_outlined("+ Enroll fingerprint")
+    actions_layout.addWidget(window.btn_enroll_fp)
+    
     window.btn_train = _btn_outlined("Train SVM model")
     actions_layout.addWidget(window.btn_train)
 

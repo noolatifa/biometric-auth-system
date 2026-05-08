@@ -67,6 +67,14 @@ class DatabaseManager:
     def list_persons(self):
         return self.conn.execute("SELECT id, name, status FROM persons").fetchall()
 
+    def delete_person(self, name):
+        pid = self.get_person_id(name)
+        if pid is None:
+            return
+        self.conn.execute("DELETE FROM templates WHERE person_id=?", (pid,))
+        self.conn.execute("DELETE FROM persons WHERE id=?", (pid,))
+        self.conn.commit()
+        
     # ── Gabarits ──────────────────────────────────────────────────────────────
 
     def store_template(self, person_id, modality, vector, checksum, wm_payload):

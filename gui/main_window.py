@@ -232,6 +232,9 @@ def _make_right_panel(window):
     actions_layout.addWidget(window.btn_integrity)
     window.btn_history = _btn_outlined("Session history", color=TEXT2)
     actions_layout.addWidget(window.btn_history)
+    
+    window.btn_delete = _btn_outlined("Delete person (RGPD)", color=RED)
+    actions_layout.addWidget(window.btn_delete)
 
     col.addWidget(actions_card)
 

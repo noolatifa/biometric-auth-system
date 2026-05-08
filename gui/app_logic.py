@@ -57,6 +57,7 @@ class AppLogic(QMainWindow):
         # Camera state
         self.camera  = None
         self.running = False
+        self._last_face_pos = None
 
         # Build the visual layout (defined in main_window.py)
         build_ui(self)
@@ -74,7 +75,8 @@ class AppLogic(QMainWindow):
         self.btn_integrity.clicked.connect(self.check_integrity)
         self.btn_enroll_fp.clicked.connect(self.enroll_fingerprint)
         self.sig.ask_fingerprint.connect(self._ask_fingerprint_popup)
-
+        self.btn_delete.clicked.connect(self.delete_person)
+        self.fp_recognizer = FingerprintRecognizer()
     # ── 1. Enroll a person ────────────────────────────────────────────────────
 
     def enroll(self):
@@ -137,7 +139,6 @@ class AppLogic(QMainWindow):
         self.sig.new_log.emit("Session stopped.", "info")
 
     # ── 5. Camera loop (runs in background thread) ────────────────────────────
-
     def _camera_loop(self):
             count = 0
             faces = []
@@ -165,6 +166,15 @@ class AppLogic(QMainWindow):
                 # Try to recognize every 60 frames
                 if count % 60 == 0 and faces:
                     x, y, w, h = faces[0]
+
+                    # Skip if face hasn't moved
+                    pos = (x//20, y//20)
+                    if pos == self._last_face_pos:
+                        self.detector.draw(frame, faces, label, color)
+                        self.sig.new_frame.emit(frame)
+                        continue
+                    self._last_face_pos = pos
+
                     roi         = frame[y:y+h, x:x+w]
                     face_result = self.recognizer.predict(roi)
 
@@ -303,7 +313,42 @@ class AppLogic(QMainWindow):
             self._fp_result = None
             self.sig.new_log.emit("Fingerprint cancelled.", "info")
         self._fp_event.set()  # unblock the camera loop
+        
+    # ── Delete person (RGPD) ─────────────────────────────────────────────────
+    def delete_person(self):
+        import shutil
+        persons = self.db.list_persons()
+        if not persons:
+            QMessageBox.information(self, "Delete", "No persons in database.")
+            return
+        names = [p[1] for p in persons]
+        name, ok = QInputDialog.getItem(
+            self, "Delete person", "Choose:", names, 0, False)
+        if not ok:
+            return
+        confirm = QMessageBox.question(
+            self, "Confirm",
+            f"Permanently delete {name} and all their data?",
+            QMessageBox.Yes | QMessageBox.No)
+        if confirm != QMessageBox.Yes:
+            return
 
+        # 1. Delete from SQLite (person + templates)
+        self.db.delete_person(name)
+
+        # 2. Delete from fingerprint pickle
+        if name in self.fp_recognizer.db:
+            del self.fp_recognizer.db[name]
+            self.fp_recognizer._save()
+
+        # 3. Delete face images from disk
+        import os
+        for status in ("authorized", "unauthorized"):
+            folder = os.path.join("data", "known_faces", status, name)
+            if os.path.isdir(folder):
+                shutil.rmtree(folder)
+
+        self.sig.new_log.emit(f"{name} fully deleted (GDPR).", "info")
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
     def closeEvent(self, event):

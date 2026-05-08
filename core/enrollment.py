@@ -12,7 +12,7 @@ from core.detection import FaceDetector
 from core.recognition import extract_features
 from core.template_watermark import TemplateWatermarker
 
-N_PHOTOS   = 10
+N_PHOTOS   = 60
 SAVE_DIR   = "data/known_faces"
 
 
@@ -44,6 +44,8 @@ class EnrollmentPipeline:
         os.makedirs(save_dir, exist_ok=True)
 
         try:
+            last_capture = time.time()
+
             while len(vectors) < N_PHOTOS:
                 ret, frame = cap.read()
                 if not ret:
@@ -52,23 +54,39 @@ class EnrollmentPipeline:
                 faces   = self.detector.detect(frame)
                 display = frame.copy()
                 cv2.putText(display,
-                    f"Captures : {len(vectors)}/{N_PHOTOS}   ESPACE=photo  Q=quitter",
+                    f"Captures : {len(vectors)}/{N_PHOTOS} — move slightly",
                     (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                 self.detector.draw(display, faces)
-                cv2.imshow(f"Enrôlement — {name}", display)
+                cv2.imshow(f"Enrollment — {name}", display)
 
                 key = cv2.waitKey(1)
                 if key in (ord("q"), 27):
                     return False, "Enrôlement annulé."
-                if key == ord(" ") and faces:
+
+                # Auto-capture every 0.5 sec if face detected
+                if faces and (time.time() - last_capture) > 0.5:
                     x, y, w, h = faces[0]
                     roi = frame[y:y+h, x:x+w]
+
+                    # 1 capture → 4 vecteurs (variations lumière + flip)
                     vectors.append(extract_features(roi))
-                    cv2.imwrite(os.path.join(save_dir, f"{len(vectors):03d}.jpg"), roi)
-                    time.sleep(0.4)
+                    vectors.append(extract_features(cv2.flip(roi, 1)))
+                    vectors.append(extract_features(cv2.convertScaleAbs(roi, alpha=1.3, beta=30)))
+                    vectors.append(extract_features(cv2.convertScaleAbs(roi, alpha=0.7, beta=-20)))
+
+                    n = len(vectors) // 4
+                    for suffix, img in [("orig", roi),
+                                        ("flip",   cv2.flip(roi, 1)),
+                                        ("bright", cv2.convertScaleAbs(roi, alpha=1.3, beta=30)),
+                                        ("dark",   cv2.convertScaleAbs(roi, alpha=0.7, beta=-20))]:
+                        cv2.imwrite(os.path.join(save_dir, f"{n:03d}_{suffix}.jpg"), img)                    
+                    last_capture = time.time()
+
         finally:
             cap.release()
             cv2.destroyAllWindows()
+            print(f"Vectors captured: {len(vectors)}")  # ← ajoute ici
+
 
         if len(vectors) < 3:
             return False, "Pas assez de captures (minimum 3)."

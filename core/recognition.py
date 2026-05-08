@@ -11,10 +11,12 @@ from skimage.feature import hog, local_binary_pattern
 from sklearn.svm import SVC
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
+from sklearn.model_selection import GridSearchCV
+
 
 FACE_SIZE  = (128, 128)
 MODEL_PATH = "models/svm_face.pkl"
-THRESHOLD  = 0.80  # Score minimum pour valider la reconnaissance
+THRESHOLD  = 0.65  # Score minimum pour valider la reconnaissance
 
 
 def extract_features(bgr_face):
@@ -80,14 +82,22 @@ class FaceRecognizer:
         X = np.array(features)
         y = self.label_encoder.fit_transform(labels)
 
-        self.pipeline = Pipeline([
+        base_pipeline = Pipeline([
             ("scaler", StandardScaler()),
-            ("svm",    SVC(kernel="rbf", C=10, gamma="scale",
-                           probability=True, random_state=42)),
+            ("svm",    SVC(kernel="rbf", probability=True, random_state=42)),
         ])
-        self.pipeline.fit(X, y)
+        param_grid = {
+            "svm__C":     [1, 10, 50],
+            "svm__gamma": ["scale", "auto"],
+        }
+        n_splits = min(5, min(np.bincount(y)))
+        grid = GridSearchCV(base_pipeline, param_grid, cv=n_splits, n_jobs=-1)
+        grid.fit(X, y)
+        self.pipeline = grid.best_estimator_
+        print(f"Meilleurs params : {grid.best_params_}")
+        print(f"Score CV         : {grid.best_score_*100:.1f}%")
+        print(f"Modèle entraîné  : {len(X)} images, {len(self.label_encoder.classes_)} personnes.")
         self.save()
-        print(f"Modèle entraîné : {len(X)} images, {len(self.label_encoder.classes_)} personnes.")
 
     def predict(self, face_bgr):
         """

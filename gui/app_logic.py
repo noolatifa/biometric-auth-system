@@ -281,21 +281,34 @@ class AppLogic(QMainWindow):
         self.log_box.verticalScrollBar().setValue(
             self.log_box.verticalScrollBar().maximum())
         
-    # ── Fingerprint popup ─────────────────────────────────────────────────────
+# ── Fingerprint popup ─────────────────────────────────────────────────────
+
     def enroll_fingerprint(self):
-        """Register a fingerprint from an image file."""
-        name, ok = QInputDialog.getText(self, "Enroll fingerprint", "Name:")
-        if not ok or not name.strip():
+        """Register a fingerprint — name must match an enrolled face."""
+
+        # Only show names already enrolled in DB
+        persons = self.db.list_persons()
+        if not persons:
+            QMessageBox.warning(self, "Error", "No enrolled persons. Enroll a face first.")
             return
-        status, ok = QInputDialog.getItem(
-            self, "Status", "Status:", ["authorized", "unauthorized"], 0, False)
+
+        names = [p[1] for p in persons]
+        name, ok = QInputDialog.getItem(
+            self, "Enroll fingerprint",
+            "Select person (must be face-enrolled):",
+            names, 0, False)
         if not ok:
             return
+
         path, _ = QFileDialog.getOpenFileName(
             self, "Select fingerprint image", "", "Images (*.bmp *.png *.jpg)")
         if not path:
             return
-        ok2, msg = self.fp_recognizer.enroll(name.strip(), status, path)
+
+        # Status taken from DB automatically — no need to ask again
+        status = next(p[2] for p in persons if p[1] == name)
+
+        ok2, msg = self.fp_recognizer.enroll(name, status, path)
         self.sig.new_log.emit(msg, "info" if ok2 else "error")
 
     def _ask_fingerprint_popup(self, face_result):
@@ -312,7 +325,7 @@ class AppLogic(QMainWindow):
         else:
             self._fp_result = None
             self.sig.new_log.emit("Fingerprint cancelled.", "info")
-        self._fp_event.set()  # unblock the camera loop
+        self._fp_event.set()
         
     # ── Delete person (RGPD) ─────────────────────────────────────────────────
     def delete_person(self):
@@ -347,6 +360,13 @@ class AppLogic(QMainWindow):
             folder = os.path.join("data", "known_faces", status, name)
             if os.path.isdir(folder):
                 shutil.rmtree(folder)
+                
+        # 4. Delete old SVM model — forces retraining
+        import os
+        if os.path.exists("models/svm_face.pkl"):
+            os.remove("models/svm_face.pkl")
+            self.recognizer.pipeline = None   # reset in memory too
+            self.sig.new_log.emit("SVM model reset — please retrain.", "info")
 
         self.sig.new_log.emit(f"{name} fully deleted (GDPR).", "info")
     # ── Cleanup ───────────────────────────────────────────────────────────────

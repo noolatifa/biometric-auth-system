@@ -82,21 +82,37 @@ class FaceRecognizer:
         X = np.array(features)
         y = self.label_encoder.fit_transform(labels)
 
-        base_pipeline = Pipeline([
-            ("scaler", StandardScaler()),
-            ("svm",    SVC(kernel="rbf", probability=True, random_state=42)),
+        # base_pipeline = Pipeline([
+        #     ("scaler", StandardScaler()),
+        #     ("svm",    SVC(kernel="rbf", probability=True, random_state=42)),
+        # ])
+        # param_grid = {
+        #     "svm__C":     [1, 10, 50],
+        #     "svm__gamma": ["scale", "auto"],
+        # }
+        # n_splits = min(5, min(np.bincount(y)))
+        # grid = GridSearchCV(base_pipeline, param_grid, cv=n_splits, n_jobs=-1)
+        # grid.fit(X, y)
+        # self.pipeline = grid.best_estimator_
+        
+        
+        
+        
+        
+        self.pipeline = Pipeline([
+        ("scaler", StandardScaler()),
+        ("svm",    SVC(kernel="rbf", C=10, gamma="scale",
+                   probability=True, random_state=42)),
         ])
-        param_grid = {
-            "svm__C":     [1, 10, 50],
-            "svm__gamma": ["scale", "auto"],
-        }
-        n_splits = min(5, min(np.bincount(y)))
-        grid = GridSearchCV(base_pipeline, param_grid, cv=n_splits, n_jobs=-1)
-        grid.fit(X, y)
-        self.pipeline = grid.best_estimator_
-        print(f"Meilleurs params : {grid.best_params_}")
-        print(f"Score CV         : {grid.best_score_*100:.1f}%")
-        print(f"Modèle entraîné  : {len(X)} images, {len(self.label_encoder.classes_)} personnes.")
+        self.pipeline.fit(X, y)
+        
+        
+        
+        
+        # print(f"Meilleurs params : {grid.best_params_}")
+        # print(f"Score CV         : {grid.best_score_*100:.1f}%")
+        # print(f"Modèle entraîné  : {len(X)} images, {len(self.label_encoder.classes_)} personnes.")
+        print(f"Modèle entraîné : {len(X)} images, {len(self.label_encoder.classes_)} personnes.")
         self.save()
 
     def predict(self, face_bgr):

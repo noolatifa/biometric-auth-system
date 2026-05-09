@@ -44,6 +44,17 @@ class FaceRecognizer:
         self.pipeline      = None
         self.label_encoder = LabelEncoder()
         self.statuses      = {}  # {name -> "authorized" | "unauthorized"}
+      
+      # adding a secondary classier LBPH cause svm is failing due to low nb of images and high intra-class variance (different lighting, angles, etc.)
+        self.lbph         = cv2.face.LBPHFaceRecognizer_create()
+        self.lbph_trained = False
+        self.LBPH_PATH    = "models/lbph_face.yml"
+        if os.path.exists(self.LBPH_PATH):
+            self.lbph.read(self.LBPH_PATH)
+            self.lbph_trained = True
+        
+      
+      
         if os.path.exists(MODEL_PATH):
             self.load()
 
@@ -81,23 +92,6 @@ class FaceRecognizer:
 
         X = np.array(features)
         y = self.label_encoder.fit_transform(labels)
-
-        # base_pipeline = Pipeline([
-        #     ("scaler", StandardScaler()),
-        #     ("svm",    SVC(kernel="rbf", probability=True, random_state=42)),
-        # ])
-        # param_grid = {
-        #     "svm__C":     [1, 10, 50],
-        #     "svm__gamma": ["scale", "auto"],
-        # }
-        # n_splits = min(5, min(np.bincount(y)))
-        # grid = GridSearchCV(base_pipeline, param_grid, cv=n_splits, n_jobs=-1)
-        # grid.fit(X, y)
-        # self.pipeline = grid.best_estimator_
-        
-        
-        
-        
         
         self.pipeline = Pipeline([
         ("scaler", StandardScaler()),
@@ -106,12 +100,32 @@ class FaceRecognizer:
         ])
         self.pipeline.fit(X, y)
         
+        # Entraînement du classifieur LBPH
+        lbph_faces  = []
+        lbph_labels = []
+        for status in ("authorized", "unauthorized"):
+            status_dir = os.path.join(data_dir, status)
+            if not os.path.isdir(status_dir):
+                continue
+            for name in os.listdir(status_dir):
+                person_dir = os.path.join(status_dir, name)
+                if not os.path.isdir(person_dir):
+                    continue
+                for f in os.listdir(person_dir):
+                    if not f.lower().endswith((".jpg", ".png")):
+                        continue
+                    img = cv2.imread(os.path.join(person_dir, f), cv2.IMREAD_GRAYSCALE)
+                    if img is not None:
+                        lbph_faces.append(cv2.resize(img, (128, 128)))
+                        lbph_labels.append(self.label_encoder.transform([name])[0])
+
+        if lbph_faces:
+            self.lbph.train(lbph_faces, np.array(lbph_labels))
+            self.lbph.save(self.LBPH_PATH)
+            self.lbph_trained = True
+            print("LBPH model trained.")
         
         
-        
-        # print(f"Meilleurs params : {grid.best_params_}")
-        # print(f"Score CV         : {grid.best_score_*100:.1f}%")
-        # print(f"Modèle entraîné  : {len(X)} images, {len(self.label_encoder.classes_)} personnes.")
         print(f"Modèle entraîné : {len(X)} images, {len(self.label_encoder.classes_)} personnes.")
         self.save()
 
@@ -121,21 +135,62 @@ class FaceRecognizer:
           name       : str
           status     : "authorized" | "unauthorized" | "unknown"
           confidence : float  (0.0 – 1.0)
+
+        Pipeline : LBPH (rapide) → SVM (confirme) → décision
         """
-        if self.pipeline is None:
+        if not self.lbph_trained or self.pipeline is None:
             return {"name": "Inconnu", "status": "unknown", "confidence": 0.0}
 
+        # Step 1 — LBPH : rapide, s'arrête si inconnu
+        gray          = cv2.cvtColor(cv2.resize(face_bgr, (128, 128)), cv2.COLOR_BGR2GRAY)
+        lbph_id, dist = self.lbph.predict(gray)
+
+        if dist > 80:
+            return {"name": "Inconnu", "status": "unknown", "confidence": 0.0}
+
+        lbph_conf = max(0.0, 1.0 - dist / 100)
+
+        # Step 2 — SVM : confirme l'identité
         feat  = extract_features(face_bgr)
         proba = self.pipeline.predict_proba(feat.reshape(1, -1))[0]
         idx   = int(np.argmax(proba))
         conf  = float(proba[idx])
 
-        if conf < THRESHOLD:
-            return {"name": "Inconnu", "status": "unknown", "confidence": conf}
+        # Les deux doivent être d'accord
+        if idx != lbph_id:
+            return {"name": "Inconnu", "status": "unknown", "confidence": 0.0}
+
+        # Confiance finale = moyenne des deux
+        final_conf = (conf + lbph_conf) / 2
+
+        if final_conf < THRESHOLD:
+            return {"name": "Inconnu", "status": "unknown", "confidence": final_conf}
 
         name   = self.label_encoder.inverse_transform([idx])[0]
         status = self.statuses.get(name, "unknown")
-        return {"name": name, "status": status, "confidence": conf}
+        return {"name": name, "status": status, "confidence": final_conf}
+        
+        
+    # def predict(self, face_bgr):
+    #     """
+    #     Retourne dict :
+    #       name       : str
+    #       status     : "authorized" | "unauthorized" | "unknown"
+    #       confidence : float  (0.0 – 1.0)
+    #     """
+    #     if not self.lbph_trained:
+    #         return {"name": "Inconnu", "status": "unknown", "confidence": 0.0}
+
+    #     gray          = cv2.cvtColor(cv2.resize(face_bgr, (128, 128)), cv2.COLOR_BGR2GRAY)
+    #     lbph_id, dist = self.lbph.predict(gray)
+
+    #     if dist > 80:
+    #         return {"name": "Inconnu", "status": "unknown", "confidence": 0.0}
+
+    #     conf   = max(0.0, 1.0 - dist / 100)
+    #     name   = self.label_encoder.inverse_transform([lbph_id])[0]
+    #     status = self.statuses.get(name, "unknown")
+    #     return {"name": name, "status": status, "confidence": conf}
 
     def save(self):
         os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)

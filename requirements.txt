@@ -1,6 +1,6 @@
 PyQt5
-opencv-python
 numpy
 scikit-learn
 scikit-image
 cryptography
+opencv-contrib-python

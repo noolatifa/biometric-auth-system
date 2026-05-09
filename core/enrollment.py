@@ -53,8 +53,14 @@ class EnrollmentPipeline:
 
                 faces   = self.detector.detect(frame)
                 display = frame.copy()
+
+                messages = [
+                    "Face normale", "Tournez a gauche", "Tournez a droite",
+                    "Rapprochez-vous", "Eloignez-vous", "Souriez"
+                ]
+                msg = messages[(len(vectors) // 4) % len(messages)]
                 cv2.putText(display,
-                    f"Captures : {len(vectors)}/{N_PHOTOS} — move slightly",
+                    f"Captures : {len(vectors)}/{N_PHOTOS} — {msg}",
                     (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                 self.detector.draw(display, faces)
                 cv2.imshow(f"Enrollment — {name}", display)
@@ -63,12 +69,21 @@ class EnrollmentPipeline:
                 if key in (ord("q"), 27):
                     return False, "Enrôlement annulé."
 
-                # Auto-capture every 0.5 sec if face detected
-                if faces and (time.time() - last_capture) > 0.5:
+                if faces and (time.time() - last_capture) > 1.5:
                     x, y, w, h = faces[0]
                     roi = frame[y:y+h, x:x+w]
+                    
+                  
 
-                    # 1 capture → 4 vecteurs (variations lumière + flip)
+                    # Liveness check ← ajoute ici
+                    if not self._is_live(roi):
+                        cv2.putText(display, "PHOTO DETECTED — Use real face!",
+                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                        last_capture = time.time()
+                        continue
+
+                    
+
                     vectors.append(extract_features(roi))
                     vectors.append(extract_features(cv2.flip(roi, 1)))
                     vectors.append(extract_features(cv2.convertScaleAbs(roi, alpha=1.3, beta=30)))
@@ -79,7 +94,7 @@ class EnrollmentPipeline:
                                         ("flip",   cv2.flip(roi, 1)),
                                         ("bright", cv2.convertScaleAbs(roi, alpha=1.3, beta=30)),
                                         ("dark",   cv2.convertScaleAbs(roi, alpha=0.7, beta=-20))]:
-                        cv2.imwrite(os.path.join(save_dir, f"{n:03d}_{suffix}.jpg"), img)                    
+                        cv2.imwrite(os.path.join(save_dir, f"{n:03d}_{suffix}.jpg"), img)
                     last_capture = time.time()
 
         finally:
@@ -126,3 +141,12 @@ class EnrollmentPipeline:
             if similarity > 0.92:   # threshold — same face
                 return True, name
         return False, None
+    
+    
+    def _is_live(self, roi):
+        """
+        Détecte si c'est un vrai visage ou une photo.
+        """
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        blur = cv2.Laplacian(gray, cv2.CV_64F).var()
+        return blur > 50   # vrai visage = texture riche

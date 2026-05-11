@@ -60,6 +60,7 @@ class FingerprintRecognizer:
         self.db[name] = {"minutiae": minutiae, "status": status}  
         self._save()
         
+        
         return True, f"Fingerprint enrolled for {name} ({len(minutiae)} minutiae)."
     # ── Predict ───────────────────────────────────────────────────────────────
 

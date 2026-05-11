@@ -76,7 +76,9 @@ class AppLogic(QMainWindow):
         self.btn_enroll_fp.clicked.connect(self.enroll_fingerprint)
         self.sig.ask_fingerprint.connect(self._ask_fingerprint_popup)
         self.btn_delete.clicked.connect(self.delete_person)
+        self.btn_history.clicked.connect(self.show_history)
         self.fp_recognizer = FingerprintRecognizer()
+        
     # ── 1. Enroll a person ────────────────────────────────────────────────────
 
     def enroll(self):
@@ -312,20 +314,38 @@ class AppLogic(QMainWindow):
         self.sig.new_log.emit(msg, "info" if ok2 else "error")
 
     def _ask_fingerprint_popup(self, face_result):
-        """Called automatically after face is recognized — asks for fingerprint image."""
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            f"Face: {face_result['name']} — Select your fingerprint image",
-            "",
-            "Images (*.bmp *.png *.jpg)")
-        if path:
-            self._fp_result = self.fp_recognizer.predict(path)
-            self.sig.new_log.emit(
-                f"Fingerprint score: {self._fp_result['confidence']*100:.0f}%", "info")
-        else:
-            self._fp_result = None
-            self.sig.new_log.emit("Fingerprint cancelled.", "info")
-        self._fp_event.set()
+            """Called automatically after face is recognized — asks for fingerprint image."""
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                f"Face: {face_result['name']} — Select your fingerprint image",
+                "",
+                "Images (*.bmp *.png *.jpg)")
+
+            if path:
+                if face_result['name'] not in self.fp_recognizer.db:
+                    self._fp_result = None
+                    self.sig.new_log.emit(
+                        f"No fingerprint enrolled for {face_result['name']}.", "info")
+                else:
+                    fp_result = self.fp_recognizer.predict(path)
+
+                    if fp_result["name"] == face_result["name"] and fp_result["confidence"] >= 0.60:
+                        self._fp_result = fp_result
+                        self.sig.new_log.emit(
+                            f"Fingerprint score: {fp_result['confidence']*100:.0f}%", "info")
+                    else:
+                        self._fp_result = {
+                            "name":       face_result["name"],
+                            "status":     "unknown",
+                            "confidence": 0.0
+                        }
+                        self.sig.new_log.emit(
+                            "Wrong fingerprint — does not match the recognized person.", "error")
+            else:
+                self._fp_result = None
+                self.sig.new_log.emit("Fingerprint cancelled.", "info")
+
+            self._fp_event.set()
         
     # ── Delete person (RGPD) ─────────────────────────────────────────────────
     def delete_person(self):
@@ -369,6 +389,51 @@ class AppLogic(QMainWindow):
             self.sig.new_log.emit("SVM model reset — please retrain.", "info")
 
         self.sig.new_log.emit(f"{name} fully deleted (GDPR).", "info")
+        
+        
+        
+        
+        
+        
+    #    show history of auth attempts
+    
+    
+    def show_history(self):
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView
+        from PyQt5.QtGui import QColor
+
+        events = self.db.get_auth_events(limit=40)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Authentication History")
+        dlg.resize(980, 460)
+        lay  = QVBoxLayout(dlg)
+        cols = ["ID", "Name", "Decision", "Face score", "FP score", "Fused score", "Detail", "Timestamp"]
+        table = QTableWidget(len(events), len(cols))
+        table.setHorizontalHeaderLabels(cols)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.verticalHeader().setVisible(False)
+        table.setAlternatingRowColors(True)
+        color_map = {
+            "authorized":   "#1E8E3E",
+            "partial":      "#E37400",
+            "unauthorized": "#D93025",
+            "unknown":      "#F29900",
+        }
+        for row, e in enumerate(events):
+            vals = [str(e[0]), str(e[1]), str(e[2]),
+                    f"{(e[3] or 0)*100:.1f}%",
+                    f"{(e[4] or 0)*100:.1f}%",
+                    f"{(e[5] or 0)*100:.1f}%",
+                    str(e[6]), str(e[7])]
+            for col, val in enumerate(vals):
+                item = QTableWidgetItem(val)
+                item.setFlags(item.flags() & ~0x2)
+                if col == 2:
+                    item.setForeground(QColor(color_map.get(val, "#5F6368")))
+                table.setItem(row, col, item)
+        lay.addWidget(table)
+        dlg.exec_()
+    
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
     def closeEvent(self, event):

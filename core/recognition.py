@@ -3,6 +3,7 @@ core/recognition.py
 Extraction HOG+LBP et classification SVM.
 """
 
+from math import dist
 import os
 import cv2
 import pickle
@@ -16,7 +17,7 @@ from sklearn.model_selection import GridSearchCV
 
 FACE_SIZE  = (128, 128)
 MODEL_PATH = "models/svm_face.pkl"
-THRESHOLD  = 0.65  # Score minimum pour valider la reconnaissance
+THRESHOLD  = 0.55  # Score minimum pour valider la reconnaissance
 
 
 def extract_features(bgr_face):
@@ -171,26 +172,7 @@ class FaceRecognizer:
         return {"name": name, "status": status, "confidence": final_conf}
         
         
-    # def predict(self, face_bgr):
-    #     """
-    #     Retourne dict :
-    #       name       : str
-    #       status     : "authorized" | "unauthorized" | "unknown"
-    #       confidence : float  (0.0 – 1.0)
-    #     """
-    #     if not self.lbph_trained:
-    #         return {"name": "Inconnu", "status": "unknown", "confidence": 0.0}
 
-    #     gray          = cv2.cvtColor(cv2.resize(face_bgr, (128, 128)), cv2.COLOR_BGR2GRAY)
-    #     lbph_id, dist = self.lbph.predict(gray)
-
-    #     if dist > 80:
-    #         return {"name": "Inconnu", "status": "unknown", "confidence": 0.0}
-
-    #     conf   = max(0.0, 1.0 - dist / 100)
-    #     name   = self.label_encoder.inverse_transform([lbph_id])[0]
-    #     status = self.statuses.get(name, "unknown")
-    #     return {"name": name, "status": status, "confidence": conf}
 
     def save(self):
         os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)

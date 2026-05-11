@@ -5,7 +5,7 @@ Fusion des scores biométriques (règle de la somme pondérée).
 
 WEIGHT_FACE        = 0.6
 WEIGHT_FINGERPRINT = 0.4
-THRESHOLD          = 0.65
+THRESHOLD          = 0.55
 
 
 def fuse(face_score, fingerprint_score=0.0):
@@ -35,9 +35,9 @@ def decide(face_result, fingerprint_result=None):
         detail   = f"Alerte — visage OK ({face_result.get('name')}) mais empreinte non confirmée"
 
     elif face_ok and not fp_configured:
-        decision = "authorized"
-        detail   = f"Accès accordé — visage {face_score*100:.0f}% (pas d'empreinte configurée)"
-
+        decision = "partial"
+        detail   = f"Alerte — visage reconnu mais aucune empreinte enrôlée pour cette personne"
+  
     else:
         decision = "unknown"
         detail   = f"Identité inconnue — score {fused*100:.0f}%"

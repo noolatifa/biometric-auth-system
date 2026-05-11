@@ -75,12 +75,11 @@ class EnrollmentPipeline:
                     
                   
 
-                    # Liveness check ← ajoute ici
-                    if not self._is_live(roi):
-                        cv2.putText(display, "PHOTO DETECTED — Use real face!",
-                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                        last_capture = time.time()
-                        continue
+                    # if not self._is_live(roi):
+                    #     cv2.putText(display, "PHOTO DETECTED — Use real face!",
+                    #         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    #     last_capture = time.time()
+                    #     continue
 
                     
 

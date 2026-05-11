@@ -16,7 +16,7 @@ class FaceDetector:
         gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray  = cv2.equalizeHist(gray)
         faces = self.detector.detectMultiScale(
-            gray, scaleFactor=1.2, minNeighbors=6, minSize=(80, 80))
+            gray, scaleFactor=1.2, minNeighbors=6, minSize=(40, 40))
         return list(faces) if len(faces) > 0 else []
 
     def draw(self, frame, faces, label="", color=(0, 255, 0)):
